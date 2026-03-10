@@ -99,7 +99,7 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
   const [clusterReportInput, setClusterReportInput] = useState(() => localStorage.getItem(STORAGE_KEYS.CLUSTER_REPORT) || '');
   const [clusterCompetitionInput, setClusterCompetitionInput] = useState(() => localStorage.getItem(STORAGE_KEYS.CLUSTER_COMPETITION) || '');
   // --- Multi-Market State ---
-  const [marketDataMap, setMarketDataMap] = useState<Record<string, { market: string, staff: string, cat: string }>>(() => {
+  const [marketDataMap, setMarketDataMap] = useState<Record<string, { market: string, staff: string, cat: string, staffCat?: string }>>(() => {
     const saved = localStorage.getItem('BI_PRO_MARKET_MAP_V30');
     return saved ? JSON.parse(saved) : {};
   });
@@ -154,7 +154,10 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
     totalAdj: number;
     traGopAdj: number;
     quyDoiAdj: number;
-  }>>({});
+  }>>(() => {
+    const saved = localStorage.getItem('BI_PRO_TARGET_MAP_V30');
+    return saved ? JSON.parse(saved) : {};
+  });
   
   const targetConfig = useMemo(() => {
     if (activeMarketName && targetConfigMap[activeMarketName]) {
@@ -323,17 +326,21 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
     localStorage.setItem(STORAGE_KEYS.CLUSTER_REPORT, clusterReportInput);
     localStorage.setItem(STORAGE_KEYS.CLUSTER_COMPETITION, clusterCompetitionInput);
     localStorage.setItem('BI_PRO_MARKET_MAP_V30', JSON.stringify(marketDataMap));
+    localStorage.setItem('BI_PRO_TARGET_MAP_V30', JSON.stringify(targetConfigMap));
     if (activeMarketName) localStorage.setItem('BI_PRO_ACTIVE_MARKET_V30', activeMarketName);
     setLastSaved(new Date());
 
     // Aggregate all data for preview
     const allMarketInput = [
-      ...Object.values(marketDataMap as Record<string, { market: string, staff: string, cat: string }>).map(d => d.market),
-      marketInput,
+      ...Object.values(marketDataMap).map(d => d.market),
+      activeMarketName ? '' : marketInput,
       clusterReportInput,
       clusterCompetitionInput
     ].filter(Boolean).join('\n');
-    const allStaffInput = Object.values(marketDataMap as Record<string, { market: string, staff: string, cat: string }>).map(d => d.staff).join('\n') || staffInput;
+    const allStaffInput = [
+      ...Object.values(marketDataMap).map(d => d.staff),
+      activeMarketName ? '' : staffInput
+    ].filter(Boolean).join('\n');
     
     const markets = parseMarketData(allMarketInput, targetConfig.totalAdj - 100);
     const staff = parseStaffList(staffCategoryInput || allStaffInput);
@@ -343,14 +350,14 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
     if (!activeMarketName && markets.length > 0) {
       setActiveMarketName(markets[0].name);
     }
-  }, [marketInput, staffInput, categoryInput, staffCategoryInput, clusterReportInput, clusterCompetitionInput, targetConfig.totalAdj, daysPassed, totalDays, selectedMonth, excludedStaffIds, excludedMarketNames, categoryAdjustments, marketDataMap, activeMarketName]);
+  }, [marketInput, staffInput, categoryInput, staffCategoryInput, clusterReportInput, clusterCompetitionInput, targetConfig.totalAdj, daysPassed, totalDays, selectedMonth, excludedStaffIds, excludedMarketNames, categoryAdjustments, marketDataMap, activeMarketName, targetConfigMap]);
 
   // Sync current inputs to map
   useEffect(() => {
     if (activeMarketName) {
       setMarketDataMap(prev => {
         const current = prev[activeMarketName];
-        if (current && current.market === marketInput && current.staff === staffInput && current.cat === categoryInput) {
+        if (current && current.market === marketInput && current.staff === staffInput && current.cat === categoryInput && current.staffCat === staffCategoryInput) {
           return prev;
         }
         return {
@@ -358,12 +365,13 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
           [activeMarketName]: {
             market: marketInput,
             staff: staffInput,
-            cat: categoryInput
+            cat: categoryInput,
+            staffCat: staffCategoryInput
           }
         };
       });
     }
-  }, [marketInput, staffInput, categoryInput, activeMarketName]);
+  }, [marketInput, staffInput, categoryInput, staffCategoryInput, activeMarketName]);
 
   useEffect(() => {
     const includedMarkets = previewData.markets.filter(m => !excludedMarketNames.includes(m.name));
@@ -412,24 +420,33 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
     
     // Aggregate all data from map and cluster inputs
     const allMarketInput = [
-      ...Object.values(marketDataMap as Record<string, { market: string, staff: string, cat: string }>).map(d => d.market),
-      marketInput,
+      ...Object.values(marketDataMap).map(d => d.market),
+      activeMarketName ? '' : marketInput,
       clusterReportInput,
       clusterCompetitionInput
     ].filter(Boolean).join('\n');
     
-    const allStaffInput = Object.values(marketDataMap as Record<string, { market: string, staff: string, cat: string }>).map(d => d.staff).join('\n') || staffInput;
+    const allStaffInput = [
+      ...Object.values(marketDataMap).map(d => d.staff),
+      activeMarketName ? '' : staffInput
+    ].filter(Boolean).join('\n');
     
     const allCatInput = [
-      ...Object.values(marketDataMap as Record<string, { market: string, staff: string, cat: string }>).map(d => d.cat),
-      categoryInput,
+      ...Object.values(marketDataMap).map(d => d.cat),
+      activeMarketName ? '' : categoryInput,
       clusterReportInput,
       clusterCompetitionInput
+    ].filter(Boolean).join('\n');
+    
+    const allStaffCatInput = [
+      ...Object.values(marketDataMap).map(d => d.staffCat),
+      activeMarketName ? '' : staffCategoryInput
     ].filter(Boolean).join('\n');
     
     localStorage.setItem(STORAGE_KEYS.MARKET, allMarketInput);
     localStorage.setItem(STORAGE_KEYS.STAFF, allStaffInput);
     localStorage.setItem(STORAGE_KEYS.CAT, allCatInput);
+    localStorage.setItem(STORAGE_KEYS.STAFF_CAT, allStaffCatInput);
     
     setTimeout(() => {
       setIsProcessing(false);
@@ -470,6 +487,7 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
     localStorage.removeItem(STORAGE_KEYS.ADJUSTMENT);
     localStorage.removeItem(STORAGE_KEYS.EXCLUDED_STAFF);
     localStorage.removeItem('BI_PRO_MARKET_MAP_V30');
+    localStorage.removeItem('BI_PRO_TARGET_MAP_V30');
     localStorage.removeItem('BI_PRO_ACTIVE_MARKET_V30');
     localStorage.removeItem(STORAGE_KEYS.EXCLUDED_MARKETS);
     
@@ -658,11 +676,11 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
             <div className="bg-white rounded-3xl border border-slate-200 shadow-md overflow-hidden">
               <div className="px-6 py-3 border-b border-slate-100 bg-slate-50/50 flex items-center gap-2">
                 <div className="w-1 h-4 bg-indigo-500 rounded-full"></div>
-                <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">KHAI BÁO</span>
+                <span className="text-xl font-black text-slate-900 uppercase tracking-[0.2em]">KHAI BÁO</span>
               </div>
               <div className="flex flex-wrap items-center justify-center gap-4 p-4">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider px-2">Tháng:</span>
+                  <span className="text-xs font-black text-slate-600 uppercase tracking-wider px-2">Tháng:</span>
                   <input 
                     type="month" 
                     value={selectedMonth}
@@ -672,7 +690,7 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
                 </div>
                 <div className="w-px h-8 bg-slate-200 mx-2 hidden md:block"></div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider px-2">Số ngày đã qua:</span>
+                  <span className="text-xs font-black text-slate-600 uppercase tracking-wider px-2">Số ngày đã qua:</span>
                   <input 
                     type="number" 
                     value={daysPassed}
@@ -681,7 +699,7 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
                   />
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider px-2">Tổng ngày:</span>
+                  <span className="text-xs font-black text-slate-600 uppercase tracking-wider px-2">Tổng ngày:</span>
                   <input 
                     type="number" 
                     value={totalDays}
@@ -691,7 +709,7 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
                 </div>
                 <div className="w-px h-8 bg-slate-200 mx-2 hidden md:block"></div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider px-2">Tăng Target thêm:</span>
+                  <span className="text-xs font-black text-slate-600 uppercase tracking-wider px-2">Tăng Target thêm:</span>
                   <div className="relative">
                     <input 
                       type="number" 
@@ -1018,10 +1036,12 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
                           setMarketInput(data.market);
                           setStaffInput(data.staff);
                           setCategoryInput(data.cat);
+                          setStaffCategoryInput(data.staffCat || '');
                         } else {
                           setMarketInput('');
                           setStaffInput('');
                           setCategoryInput('');
+                          setStaffCategoryInput('');
                         }
                       }}
                       className={cn(
@@ -1214,6 +1234,20 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="space-y-4">
                   <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-400"></span> BC DOANH THU
+                  </h3>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">DOANH THU TỔNG</label>
+                    <textarea 
+                      value={marketInput}
+                      onChange={(e) => setMarketInput(e.target.value)}
+                      rows={5}
+                      placeholder="Dán báo cáo doanh thu vào đây..."
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:ring-2 focus:ring-blue-500 outline-none resize-none font-mono"
+                    />
+                  </div>
+                  
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-2 mt-6">
                     <span className="w-2 h-2 rounded-full bg-emerald-400"></span> BC D.THU THEO NV
                   </h3>
                   <div className="space-y-1">
@@ -1221,50 +1255,40 @@ export default function UpdateData({ onNavigate }: UpdateDataProps) {
                     <textarea 
                       value={staffInput}
                       onChange={(e) => setStaffInput(e.target.value)}
-                      rows={3}
+                      rows={5}
                       placeholder="DOANH THU"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:ring-2 focus:ring-emerald-500 outline-none resize-none font-mono"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">T.ĐUA NHÂN VIÊN</label>
-                    <textarea 
-                      value={staffInput}
-                      onChange={(e) => setStaffInput(e.target.value)}
-                      rows={3}
-                      placeholder="THI ĐUA NV"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:ring-2 focus:ring-emerald-500 outline-none resize-none font-mono"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">H.QUẢ BÁN KÈM</label>
-                    <textarea 
-                      value={staffInput}
-                      onChange={(e) => setStaffInput(e.target.value)}
-                      rows={3}
-                      placeholder="HQ BÁN KÈM"
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:ring-2 focus:ring-emerald-500 outline-none resize-none font-mono"
                     />
                   </div>
                 </div>
                 <div className="space-y-4">
                   <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-purple-400"></span> T.ĐUA NHÂN VIÊN
+                  </h3>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">THI ĐUA NV</label>
+                    <textarea 
+                      value={staffCategoryInput}
+                      onChange={(e) => setStaffCategoryInput(e.target.value)}
+                      rows={5}
+                      placeholder="THI ĐUA NV"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:ring-2 focus:ring-purple-500 outline-none resize-none font-mono"
+                    />
+                  </div>
+
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider flex items-center gap-2 mt-6">
                     <span className="w-2 h-2 rounded-full bg-amber-400"></span> TRẢ GÓP & CHI TIẾT NH
                   </h3>
-                  <textarea 
-                    value={categoryInput}
-                    onChange={(e) => setCategoryInput(e.target.value)}
-                    rows={4}
-                    placeholder="MA TRẬN NH"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:ring-2 focus:ring-amber-500 outline-none resize-none font-mono"
-                  />
-                  <textarea 
-                    value={categoryInput}
-                    onChange={(e) => setCategoryInput(e.target.value)}
-                    rows={4}
-                    placeholder="TRẢ GÓP NV"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:ring-2 focus:ring-amber-500 outline-none resize-none font-mono"
-                  />
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase">MA TRẬN NH</label>
+                    <textarea 
+                      value={categoryInput}
+                      onChange={(e) => setCategoryInput(e.target.value)}
+                      rows={5}
+                      placeholder="MA TRẬN NH"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:ring-2 focus:ring-amber-500 outline-none resize-none font-mono"
+                    />
+                  </div>
                 </div>
               </div>
             )}

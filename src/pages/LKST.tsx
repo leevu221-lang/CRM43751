@@ -98,7 +98,10 @@ export default function GeneralReport({ onNavigate }: { onNavigate?: (page: 'gen
   const [staffInput, setStaffInput] = useState(() => localStorage.getItem(STORAGE_KEYS.STAFF) || '');
   const [categoryInput, setCategoryInput] = useState(() => localStorage.getItem(STORAGE_KEYS.CAT) || '');
   const [staffCategoryInput, setStaffCategoryInput] = useState(() => localStorage.getItem(STORAGE_KEYS.STAFF_CAT) || '');
-  const [manualAdjustment, setManualAdjustment] = useState(() => Number(localStorage.getItem(STORAGE_KEYS.ADJUSTMENT)) || 0);
+  const [manualAdjustment, setManualAdjustment] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.ADJUSTMENT);
+    return saved ? Number(saved) - 100 : 0;
+  });
   
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SELECTED_MONTH);
@@ -138,12 +141,14 @@ export default function GeneralReport({ onNavigate }: { onNavigate?: (page: 'gen
   
   const [processedData, setProcessedData] = useState<{
     markets: MarketInfo[];
+    totalMarket: MarketInfo | null;
     catData: CategoryData[];
     staffRankData: StaffData[];
     staffEffData: StaffData[];
     staffMatrix: StaffMatrixData[];
   }>({
     markets: [],
+    totalMarket: null,
     catData: [],
     staffRankData: [],
     staffEffData: [],
@@ -256,7 +261,7 @@ export default function GeneralReport({ onNavigate }: { onNavigate?: (page: 'gen
     localStorage.setItem(STORAGE_KEYS.STAFF, staffInput);
     localStorage.setItem(STORAGE_KEYS.CAT, categoryInput);
     localStorage.setItem(STORAGE_KEYS.STAFF_CAT, staffCategoryInput);
-    localStorage.setItem(STORAGE_KEYS.ADJUSTMENT, manualAdjustment.toString());
+    localStorage.setItem(STORAGE_KEYS.ADJUSTMENT, (manualAdjustment + 100).toString());
     localStorage.setItem(STORAGE_KEYS.EXCLUDED_STAFF, JSON.stringify(excludedStaffIds));
     localStorage.setItem(STORAGE_KEYS.EXCLUDED_MARKETS, JSON.stringify(excludedMarketNames));
     localStorage.setItem(STORAGE_KEYS.DAYS_PASSED, daysPassed.toString());
@@ -273,11 +278,17 @@ export default function GeneralReport({ onNavigate }: { onNavigate?: (page: 'gen
 
   // --- Parsing Logic ---
 
-  const parseMarketData = (input: string, adjustment: number): MarketInfo[] => {
+  const parseMarketData = (input: string, defaultAdjustment: number): { markets: MarketInfo[], totalMarket: MarketInfo | null } => {
     const val = input.trim();
-    if (!val) return [];
+    if (!val) return { markets: [], totalMarket: null };
+    
+    const targetConfigMapStr = localStorage.getItem('BI_PRO_TARGET_MAP_V30');
+    const targetConfigMap = targetConfigMapStr ? JSON.parse(targetConfigMapStr) : {};
+    
     const lines = val.split('\n');
     const results: MarketInfo[] = [];
+    let totalMarket: MarketInfo | null = null;
+    let currentTable = "";
 
     const cleanNum = (s: string) => {
       if (!s) return 0;
@@ -319,7 +330,24 @@ export default function GeneralReport({ onNavigate }: { onNavigate?: (page: 'gen
 
     for (const line of lines) {
       const cleanLine = line.trim();
-      if (cleanLine.toLowerCase().startsWith("tổng") || cleanLine.toLowerCase().startsWith("tên miền")) continue;
+      
+      if (cleanLine.toLowerCase().startsWith("tên miền")) {
+        currentTable = "ten_mien";
+        continue;
+      }
+      if (cleanLine.toLowerCase().startsWith("siêu thị") || cleanLine.toLowerCase().startsWith("cửa hàng") || cleanLine.toLowerCase().startsWith("chi nhánh")) {
+        currentTable = "sieu_thi";
+        continue;
+      }
+      
+      const isTotal = cleanLine.toLowerCase().startsWith("tổng");
+      
+      if (isTotal && currentTable === "sieu_thi") {
+        continue;
+      }
+      if (!isTotal && currentTable === "ten_mien") {
+        continue;
+      }
       
       const regex = /-?[\d,.]+(%?)/g;
       let match;
@@ -349,32 +377,46 @@ export default function GeneralReport({ onNavigate }: { onNavigate?: (page: 'gen
           if (efficiency > 0) {
             const rate = efficiency > 5 ? efficiency / 100 : efficiency;
             const baseTarget = virtualProj / rate;
-            const adjustedTarget = baseTarget * (1 + adjustment / 100);
             
-            // Extract name: everything before the first data column
-            const firstDataMatch = numberMatches[firstPercentIdx - 4];
-            let marketName = "7038";
-            
-            if (firstDataMatch.index !== undefined) {
-               const rawName = cleanLine.substring(0, firstDataMatch.index).trim();
-               // Clean up trailing dashes if present
-               let name = rawName.replace(/[-_]+$/, '').trim();
-               // Remove trailing number (likely Store ID) if it exists
-               // e.g. "12 Trần Hưng Đạo 169" -> "12 Trần Hưng Đạo"
-               name = name.replace(/\s+\d+$/, '').trim();
-               
-               marketName = name;
-               if (!marketName) marketName = "7038";
-            }
-            
-            if (!results.some(m => m.name === marketName)) {
-              results.push({ name: marketName, targetST: adjustedTarget, actualReal, actualVirtual });
+            if (isTotal) {
+              // For total, we might just use the default adjustment or calculate it later
+              const adjustedTarget = baseTarget * (1 + defaultAdjustment / 100);
+              totalMarket = { name: "CỤM", targetST: adjustedTarget, actualReal, actualVirtual };
+            } else {
+              // Extract name: everything before the first data column
+              const firstDataMatch = numberMatches[firstPercentIdx - 4];
+              let marketName = "7038";
+              
+              if (firstDataMatch.index !== undefined) {
+                 const rawName = cleanLine.substring(0, firstDataMatch.index).trim();
+                 // Clean up trailing dashes if present
+                 let name = rawName.replace(/[-_]+$/, '').trim();
+                 // Remove trailing number (likely Store ID) if it exists
+                 // e.g. "12 Trần Hưng Đạo 169" -> "12 Trần Hưng Đạo"
+                 name = name.replace(/\s+\d+$/, '').trim();
+                 
+                 marketName = name;
+                 if (!marketName) marketName = "7038";
+              }
+              
+              // Use specific market adjustment if available, otherwise default
+              const marketAdj = targetConfigMap[marketName]?.totalAdj;
+              const finalAdj = marketAdj !== undefined ? (marketAdj - 100) : defaultAdjustment;
+              const adjustedTarget = baseTarget * (1 + finalAdj / 100);
+              
+              if (!results.some(m => m.name === marketName)) {
+                results.push({ name: marketName, targetST: adjustedTarget, actualReal, actualVirtual });
+              }
             }
           }
         }
       }
     }
-    return results;
+    if (totalMarket && results.length > 0) {
+      totalMarket.targetST = results.reduce((sum, m) => sum + m.targetST, 0);
+    }
+
+    return { markets: results, totalMarket };
   };
 
   const parseCategoryData = (input: string, daysPassed: number, totalDays: number, catAdjustments: Record<string, number>, markets: MarketInfo[]): CategoryData[] => {
@@ -591,7 +633,7 @@ export default function GeneralReport({ onNavigate }: { onNavigate?: (page: 'gen
   const handleProcess = () => {
     setIsProcessing(true);
     setTimeout(() => {
-      const markets = parseMarketData(marketInput, manualAdjustment);
+      const { markets, totalMarket } = parseMarketData(marketInput, manualAdjustment);
       const catData = parseCategoryData(categoryInput, daysPassed, totalDays, categoryAdjustments, markets);
       
       const linesStaff = staffInput.split('\n').map(l => l.trim()).filter(l => l.length > 0);
@@ -635,6 +677,7 @@ export default function GeneralReport({ onNavigate }: { onNavigate?: (page: 'gen
 
       setProcessedData({
         markets,
+        totalMarket,
         catData,
         staffRankData,
         staffEffData,
@@ -728,7 +771,9 @@ export default function GeneralReport({ onNavigate }: { onNavigate?: (page: 'gen
             <LayoutGrid size={24} />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight uppercase leading-none">📈 BI LUỸ KẾ TỔNG HỢP</h1>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight uppercase leading-none">
+              📈 BI LUỸ KẾ TỔNG HỢP {marketFilter === 'ALL' ? 'CỤM' : marketFilter}
+            </h1>
             <p className="text-[11px] text-slate-400 font-bold tracking-widest uppercase mt-1">v8.1.0 • Precision Analytics</p>
           </div>
         </div>
@@ -796,9 +841,15 @@ export default function GeneralReport({ onNavigate }: { onNavigate?: (page: 'gen
 
               {/* Dashboard Cards */}
               <div ref={captureRefs.marketSummary} className="space-y-6">
-                {displayData.markets
-                  .filter(market => marketFilter === 'ALL' || market.name === marketFilter)
-                  .map((market, mIdx) => (
+                {(marketFilter === 'ALL' 
+                  ? (processedData.totalMarket ? [processedData.totalMarket] : [{
+                      name: 'CỤM',
+                      targetST: displayData.markets.reduce((acc, m) => acc + m.targetST, 0),
+                      actualReal: displayData.markets.reduce((acc, m) => acc + m.actualReal, 0),
+                      actualVirtual: displayData.markets.reduce((acc, m) => acc + m.actualVirtual, 0)
+                    }])
+                  : displayData.markets.filter(market => market.name === marketFilter)
+                ).map((market, mIdx) => (
                     <div 
                       key={mIdx}
                       className="p-6 bg-[#f8fafc] rounded-3xl transition-all duration-300 shadow-sm border border-slate-100"
